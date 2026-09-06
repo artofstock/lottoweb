@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark light">
+<meta name="description" content="물리 기반 로또 예상번호 추첨기 — 45개 공이 실제 충돌 물리로 움직이고, 구멍에 먼저 들어온 공이 당첨됩니다. 사전 확정도, 가중치도 없습니다.">
+<title>로또 예상번호 추첨기</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='46' fill='%23FFD700'/><text y='72' x='50' text-anchor='middle' font-size='58' font-weight='bold' fill='%23112240'>7</text></svg>">
+<style>/*__CSS__*/</style>
+</head>
+<body>
+
+<div id="app" data-mode="normal" data-filter="off">
+
+  <!-- ═══════════════ 무대 — 시청자가 봐야 하는 전부 ═══════════════ -->
+  <div id="stage">
+    <div class="stage-inner">
+
+      <header class="stage-head">
+        <span id="stageTitle">제 1217회 로또 예상번호 추첨</span>
+        <span class="filter-badge"><span aria-hidden="true">⚗</span><span id="filterDiscard">조건 추첨</span></span>
+        <span class="spacer"></span>
+        <span class="counter" id="counter">0 / 100 게임</span>
+      </header>
+
+      <div class="field-wrap" id="fieldWrap">
+        <canvas id="field" aria-label="로또 공 추첨 화면"></canvas>
+
+        <div id="countdown" role="status"></div>
+
+        <!-- 번호 발표 -->
+        <div class="overlay" id="reveal" role="dialog" aria-live="polite" aria-label="당첨 번호 발표">
+          <div class="box">
+            <div class="title" id="revealTitle">당첨 번호</div>
+            <div class="nums" id="revealNums"></div>
+            <div class="ready" id="revealReady" hidden>준비중…</div>
+          </div>
+        </div>
+
+        <!-- 누적 통계 -->
+        <div class="overlay" id="statsOv" role="dialog" aria-label="누적 통계">
+          <div class="box">
+            <h3 id="statsTitle"></h3>
+            <div id="statsBody"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="slot-strip">
+        <div class="slots" id="slots" role="list" aria-label="이번 게임 당첨 번호"></div>
+        <div class="comb-line" id="combLine"></div>
+      </div>
+
+    </div>
+    <div class="exit-hint">B 또는 Esc — 방송 모드 종료</div>
+  </div>
+
+  <!-- ═══════════════ 조정실 — 운영자만 보는 전부 ═══════════════ -->
+  <aside id="booth">
+    <nav class="tabs" role="tablist">
+      <button class="tab" role="tab" data-panel="draw"   aria-selected="true">추첨</button>
+      <button class="tab" role="tab" data-panel="filter" aria-selected="false">조건</button>
+      <button class="tab" role="tab" data-panel="mine"   aria-selected="false">내 번호</button>
+      <button class="tab" role="tab" data-panel="test"   aria-selected="false">검정</button>
+      <button class="tab" role="tab" data-panel="setup"  aria-selected="false">설정</button>
+    </nav>
+
+    <div class="panels">
+
+      <!-- ── 추첨 ─────────────────────────────────────────────── -->
+      <section class="panel active" id="panel-draw" role="tabpanel">
+        <div class="stack">
+          <button class="btn primary wide" id="startBtn">추첨 시작</button>
+          <div class="row">
+            <button class="btn danger grow" id="resetBtn">리셋</button>
+            <button class="toggle" id="soundBtn" aria-pressed="true" title="소리 (S)">🔊</button>
+            <button class="toggle" id="ttsBtn" aria-pressed="false" title="음성안내 (T)">🎙</button>
+            <button class="toggle" id="holeBtn" title="구멍 개수 1→2→4 (H)">🎯 1구멍</button>
+          </div>
+        </div>
+
+        <div class="row" id="searchBox" hidden style="margin-top:12px">
+          <span class="hint grow" style="margin:0">조건에 맞는 추첨 찾는 중 — <b id="searchTried">0</b>판 확인</span>
+          <button class="btn sm ghost" id="searchCancel">취소</button>
+        </div>
+        <p class="hint warn" id="searchNote" hidden>워커를 쓸 수 없어 한 스레드로 탐색합니다 — 느립니다. 웹에 올려서 열면 빨라집니다.</p>
+
+        <p class="hint" id="status" style="margin-top:12px">추첨 시작 버튼을 눌러주세요</p>
+
+        <div class="group" style="margin-top:20px">
+          <h4>회차</h4>
+          <div class="row">
+            <input type="number" id="roundInput" min="1" max="99999" style="width:104px" aria-label="회차 번호">
+            <span class="hint" style="margin:0">회</span>
+            <input type="text" id="suffixInput" class="grow" maxlength="20" placeholder="부제 (선택) 예: 2차" aria-label="회차 부제">
+          </div>
+        </div>
+
+        <div class="group">
+          <h4>진행</h4>
+          <div class="row">
+            <span class="hint grow" style="margin:0">목표 게임 수</span>
+            <select id="maxGames" style="width:130px" aria-label="목표 게임 수"></select>
+          </div>
+          <div class="row">
+            <label class="check"><input type="checkbox" id="autoPlay"> 자동 진행 (완료 10초 뒤 재시작)</label>
+          </div>
+        </div>
+
+        <div class="group">
+          <h4>최근 추첨 이력</h4>
+          <table class="tbl">
+            <thead><tr><th style="width:2.4em">#</th><th>번호</th><th style="width:4.4em">시각</th></tr></thead>
+            <tbody id="histBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <!-- ── 조건 ─────────────────────────────────────────────── -->
+      <section class="panel" id="panel-filter" role="tabpanel">
+        <label class="check" style="margin-bottom:10px">
+          <input type="checkbox" id="filterOn"> <b>조건 필터 사용</b>
+        </label>
+        <p class="hint">
+          물리는 손대지 않습니다. 조건에 맞지 않는 <b>판 전체</b>를 버리고 다시 굴릴 뿐입니다.
+          그래서 <b>조건을 통과하는 모든 조합은 서로 완전히 동등합니다.</b>
+          화면에서 도는 물리가 실제로 그 번호를 만들어내며, 몇 판을 버렸는지도 무대 위에 그대로 표시됩니다.
+        </p>
+        <p class="hint warn">
+          다만 조건을 걸면 <b>번호별 확률은 달라집니다.</b> 7번을 제외하면 7번이 나올 확률은
+          0이 되고, 합계를 200 이상으로 묶으면 큰 번호가 훨씬 자주 나옵니다. 당연한 일이지만,
+          "조건을 걸어도 확률은 똑같다"는 말은 사실이 아니므로 여기 적어 둡니다.
+          번호별 확률을 건드리고 싶지 않다면 이 기능을 끄고 쓰세요.
+        </p>
+
+        <div class="group" style="margin-top:18px">
+          <h4>번호 지정 — 눌러서 고정 → 제외 → 해제</h4>
+          <div class="num-grid" id="numGrid"></div>
+          <p class="hint"><span style="color:var(--green-hi)">■</span> 고정수(반드시 포함) ·
+             <span style="color:var(--red-hi)">■</span> 제외수(절대 제외)</p>
+        </div>
+
+        <div class="group">
+          <h4>홀짝 비율</h4>
+          <div class="row">
+            <span class="hint" style="margin:0">홀수</span>
+            <input type="number" id="oddMin" min="0" max="6" style="width:66px" aria-label="홀수 최소">
+            <span class="hint" style="margin:0">~</span>
+            <input type="number" id="oddMax" min="0" max="6" style="width:66px" aria-label="홀수 최대">
+            <span class="hint grow" style="margin:0">개</span>
+          </div>
+        </div>
+
+        <div class="group">
+          <h4>번호 합계 (이론상 21 ~ 255)</h4>
+          <div class="row">
+            <input type="number" id="sumMin" min="21" max="255" style="width:82px" aria-label="합계 최소">
+            <span class="hint" style="margin:0">~</span>
+            <input type="number" id="sumMax" min="21" max="255" style="width:82px" aria-label="합계 최대">
+            <span class="hint grow" style="margin:0">실제 당첨은 대체로 100~175</span>
+          </div>
+        </div>
+
+        <div class="group">
+          <h4>연속 번호 · 구간 쏠림</h4>
+          <div class="row">
+            <span class="hint grow" style="margin:0">연속 번호 최대 길이</span>
+            <input type="number" id="maxRun" min="1" max="6" style="width:66px" aria-label="연속 최대">
+          </div>
+          <div class="row">
+            <span class="hint grow" style="margin:0">한 구간(10개 단위) 최대 개수 <small style="opacity:.7">(2 미만 불가)</small></span>
+            <input type="number" id="bandMax" min="2" max="6" style="width:66px" aria-label="구간 최대">
+          </div>
+        </div>
+
+        <div class="group">
+          <h4>직전 회차와 중복</h4>
+          <div class="row">
+            <span class="hint grow" style="margin:0">최대 중복 개수</span>
+            <input type="number" id="prevOverlapMax" min="0" max="6" style="width:66px" aria-label="중복 최대">
+          </div>
+          <div class="row">
+            <input type="text" id="prevNumbers" class="grow" placeholder="직전 회차 번호 6개 (예: 3, 12, 20, 28, 33, 41)" aria-label="직전 회차 번호">
+            <button class="btn sm ghost" id="usePrevWinning">불러오기</button>
+          </div>
+        </div>
+
+        <p class="hint" id="filterHint"></p>
+        <div id="filterCulprits" hidden></div>
+        <button class="btn ghost wide" id="filterClear" style="margin-top:12px">조건 모두 지우기</button>
+      </section>
+
+      <!-- ── 내 번호 ──────────────────────────────────────────── -->
+      <section class="panel" id="panel-mine" role="tabpanel">
+        <div class="group">
+          <h4>실제 당첨번호 입력</h4>
+          <div class="row">
+            <input type="number" id="winRound" min="1" max="99999" style="width:104px" aria-label="회차">
+            <span class="hint" style="margin:0">회</span>
+            <input type="text" id="winNums" class="grow" placeholder="당첨번호 6개" aria-label="당첨번호 6개">
+          </div>
+          <div class="row">
+            <span class="hint" style="margin:0">보너스</span>
+            <input type="number" id="winBonus" min="1" max="45" style="width:78px" aria-label="보너스 번호">
+            <button class="btn grow" id="winSave">저장하고 대조</button>
+          </div>
+          <p class="hint" id="winHint">동행복권 사이트는 외부에서 직접 조회할 수 없어 직접 입력합니다. 저장하면 그 회차의 모든 기록을 자동으로 대조합니다.</p>
+        </div>
+
+        <div class="group">
+          <h4>저장된 추첨</h4>
+          <select id="mySessionSel" aria-label="추첨 회차 선택"></select>
+          <div id="mySummary" style="margin-top:10px"></div>
+        </div>
+
+        <table class="tbl">
+          <thead><tr><th style="width:2.4em">#</th><th>번호</th><th style="width:5.2em">결과</th></tr></thead>
+          <tbody id="myBody"></tbody>
+        </table>
+      </section>
+
+      <!-- ── 검정 ─────────────────────────────────────────────── -->
+      <section class="panel" id="panel-test" role="tabpanel">
+        <p class="hint">
+          이 앱의 물리를 백그라운드에서 수천 판 돌려, 45개 번호와 구멍이 정말 고르게
+          나오는지 카이제곱으로 검정합니다. 화면 추첨과 <b>완전히 같은 코드</b>를 씁니다.
+        </p>
+
+        <div class="group" style="margin-top:16px">
+          <div class="row">
+            <span class="hint grow" style="margin:0">표본 게임 수</span>
+            <select id="testN" style="width:120px" aria-label="표본 수">
+              <option value="225">225게임 (검정 최소)</option>
+              <option value="500">500게임</option>
+              <option value="1000">1,000게임</option>
+              <option value="2000" selected>2,000게임</option>
+              <option value="5000">5,000게임</option>
+              <option value="20000">20,000게임</option>
+            </select>
+          </div>
+          <div class="row">
+            <span class="hint grow" style="margin:0">구멍 개수</span>
+            <select id="testHoles" style="width:120px" aria-label="구멍 개수">
+              <option value="1">1구멍</option>
+              <option value="2">2구멍</option>
+              <option value="4" selected>4구멍</option>
+            </select>
+          </div>
+          <p class="hint" id="testEta"></p>
+          <div class="row">
+            <button class="btn primary grow" id="testRun">검정 실행</button>
+            <button class="btn ghost" id="testStop" disabled>중단</button>
+          </div>
+        </div>
+
+        <div id="testProgress" hidden>
+          <div class="progress"><i id="testBar" style="width:0%"></i></div>
+          <p class="hint" id="testProgressText"></p>
+          <p class="hint warn" id="testNote" hidden>워커를 쓸 수 없어 한 스레드로 돌립니다 — 결과는 같지만 느립니다.</p>
+        </div>
+
+        <div id="testReport"></div>
+      </section>
+
+      <!-- ── 설정 ─────────────────────────────────────────────── -->
+      <section class="panel" id="panel-setup" role="tabpanel">
+        <div class="group">
+          <h4>화면</h4>
+          <div class="row">
+            <span class="hint grow" style="margin:0">테마</span>
+            <button class="btn sm" id="themeBtn">밝게 / 어둡게</button>
+          </div>
+          <label class="check" style="margin-top:8px"><input type="checkbox" id="smoothRender"> 부드러운 렌더링 (물리 28ms 사이를 보간)</label>
+          <label class="check" style="margin-top:8px"><input type="checkbox" id="reduceMotion"> 장식 효과 끄기 (저사양·멀미 대응)</label>
+          <p class="hint">물리는 어떤 설정에서도 28ms 고정 스텝으로 돕니다. 화면 주사율이 달라도 추첨 결과의 분포는 바뀌지 않습니다.</p>
+        </div>
+
+        <div class="group">
+          <h4>음성안내</h4>
+          <div class="row">
+            <span class="hint grow" style="margin:0">읽어주는 시점</span>
+            <select id="speakOn" style="width:170px" aria-label="음성안내 시점">
+              <option value="both">공 나올 때 + 발표 때</option>
+              <option value="capture">공 나올 때만</option>
+              <option value="reveal">발표 때만</option>
+            </select>
+          </div>
+          <p class="hint">원본은 두 번 읽습니다 — 공이 구멍에 들어갈 때 한 번, 발표 오버레이에서 또 한 번. 방송에서는 의도된 반복이지만 혼자 볼 때는 성가실 수 있습니다.</p>
+          <p class="hint" id="ttsInfo"></p>
+        </div>
+
+        <div class="group">
+          <h4>방송 모드 (OBS)</h4>
+          <p class="hint">
+            조정실을 숨기고 무대만 남깁니다. 아래 링크를 OBS의 <b>브라우저 소스</b> URL에 넣으세요.
+            <b>B</b> 키로 언제든 켜고 끌 수 있습니다.
+          </p>
+          <label class="check" style="margin-top:8px"><input type="checkbox" id="linkAuto"> 자동 진행 켜기</label>
+          <label class="check" style="margin-top:6px"><input type="checkbox" id="linkAutostart"> 열리자마자 추첨 시작</label>
+          <label class="check" style="margin-top:6px"><input type="checkbox" id="linkTransparent"> 배경 투명 (오버레이 합성용)</label>
+          <div class="row" style="margin-top:10px">
+            <button class="btn grow" id="buildLink">링크 만들기</button>
+            <button class="btn ghost" id="copyLink">복사</button>
+          </div>
+          <input type="text" id="linkOut" readonly style="margin-top:8px" placeholder="여기에 링크가 생성됩니다" aria-label="방송 링크">
+          <p class="hint">
+            OBS 브라우저 소스는 기본적으로 소리를 막습니다. 소스 속성에서
+            <b>“페이지가 보이지 않을 때 소스 종료”</b>를 끄고, 장면을 한 번 클릭해 주세요.
+            음성안내는 OBS 내장 브라우저에 한국어 음성이 없으면 자동으로 꺼집니다.
+          </p>
+        </div>
+
+        <div class="group">
+          <h4>데이터</h4>
+          <div class="row">
+            <button class="btn grow" id="expTxt">.txt 내보내기</button>
+            <button class="btn grow" id="expCsv">.csv 내보내기</button>
+          </div>
+          <div class="row">
+            <button class="btn grow" id="expBackup">전체 백업 (.json)</button>
+            <label class="btn ghost grow" style="text-align:center">
+              백업 가져오기<input type="file" id="impBackup" accept="application/json,.json" hidden>
+            </label>
+          </div>
+          <p class="hint" id="dataHint">기록은 이 브라우저에만 저장됩니다. 방문 기록을 지우면 함께 사라지니 가끔 백업해 두세요.</p>
+          <button class="btn danger wide" id="clearAll" style="margin-top:10px">기록 전체 삭제</button>
+        </div>
+
+        <div class="group">
+          <h4>단축키</h4>
+          <dl class="kv">
+            <dt>Space</dt><dd>추첨 시작</dd>
+            <dt>R</dt><dd>리셋</dd>
+            <dt>S</dt><dd>소리 켜기/끄기</dd>
+            <dt>T</dt><dd>음성안내 켜기/끄기</dd>
+            <dt>H</dt><dd>구멍 개수 1 → 2 → 4</dd>
+            <dt>B / Esc</dt><dd>방송 모드</dd>
+          </dl>
+        </div>
+
+        <div class="group">
+          <h4>순수성 선언</h4>
+          <p class="hint">
+            이 프로그램은 그 누구도 — 만든 사람도, 보는 사람도 — 추첨 결과를 미리 알 수 없도록
+            설계되었습니다. 사전 당첨 번호 확정 없음, 특정 공 유도 없음, 숨겨진 가중치 없음.
+            45개 공은 동일한 물리 법칙 아래 움직이고, 구멍에 먼저 들어온 공이 당첨됩니다.
+            난수 시드는 추첨을 시작하는 순간 <code>crypto.getRandomValues</code>로 뽑습니다.
+            의심스러우면 <b>[검정]</b> 탭에서 직접 수천 판을 돌려 확인해 보세요.
+          </p>
+          <p class="hint" style="opacity:.7">
+            원본 데스크톱판의 물리 엔진을 그대로 옮겼습니다.
+            이 앱은 실제 로또 당첨을 예측하지 않습니다 — 재미로만 쓰세요.
+          </p>
+          <p class="hint" id="versionInfo" style="opacity:.6"></p>
+        </div>
+      </section>
+
+    </div>
+  </aside>
+</div>
+
+<button class="audio-lock" id="audioLock">🔇 소리가 잠겨 있습니다 — 눌러서 켜기</button>
+
+<dialog id="helpDlg" style="background:var(--bg-panel);color:var(--text);border:1px solid var(--line);border-radius:16px;padding:20px;max-width:420px">
+  <h3 style="margin-top:0">단축키</h3>
+  <dl class="kv">
+    <dt>Space</dt><dd>추첨 시작</dd><dt>R</dt><dd>리셋</dd>
+    <dt>S</dt><dd>소리</dd><dt>T</dt><dd>음성안내</dd>
+    <dt>H</dt><dd>구멍 1→2→4</dd><dt>B / Esc</dt><dd>방송 모드</dd>
+  </dl>
+  <form method="dialog"><button class="btn wide" style="margin-top:12px">닫기</button></form>
+</dialog>
+
+<!-- ════════════════════════════════════════════════════════════════════════
+     물리·필터·검정 코드는 이 파일 안에 정확히 한 벌만 존재한다.
+     메인 스레드는 이 <script>를 그대로 실행하고, 워커는 같은 텍스트를
+     Blob으로 만들어 실행한다. 그래서 "화면에서 도는 물리"와 "공정성 검정이
+     채점한 물리"가 같은 코드라는 사실이 구조로 보장된다.
+     ═══════════════════════════════════════════════════════════════════ -->
+<script id="core-src">/*__CORE__*/</script>
+
+<script id="worker-glue" type="text/plain">/*__GLUE__*/</script>
+
+<script>/*__APP__*/</script>
+
+</body>
+</html>

@@ -1,0 +1,729 @@
+/* ============================================================================
+ * 07-styles.css — 디자인 토큰 + 레이아웃
+ *
+ * 구조: 무대(Stage) / 조정실(Booth)
+ *   무대   — 시청자가 봐야 하는 전부. 회차 제목, 물리 캔버스, 번호 슬롯,
+ *            발표 오버레이, 통계 오버레이. 이것만 있으면 방송이 성립한다.
+ *   조정실 — 운영자만 필요한 전부. 버튼, 탭, 설정, 이력, 검정.
+ *   방송 모드는 조정실을 숨기는 것 이상도 이하도 아니다. 그래서 OBS 캡처에
+ *   조작 UI가 새어 나갈 구조적 여지가 없다.
+ *
+ * 무대 안쪽 치수는 --su(stage unit)에 비례한다. 1920 폭에서 --su=1이고,
+ * 창이 줄면 같이 줄어 원본 FHD 비율이 그대로 유지된다. 다만 폰에서 글씨가
+ * 읽을 수 없게 작아지지 않도록 하한을 둔다.
+ * ========================================================================== */
+
+/* ── 토큰 ───────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: dark;
+
+  --bg-app: #060b14;
+  --bg-stage: #050d1a;
+  --bg-panel: #112240;
+  --bg-panel-2: #0a1628;
+  --bg-panel-3: #0a1020;
+  --bg-overlay: #0a0f1e;
+  --bg-input: #0d1b2a;
+  --bg-btn: #1a3a5a;
+  --bg-btn-hover: #24507a;
+
+  --line: #2a3f5f;
+  --line-soft: #1c2c44;
+
+  --gold: #ffd700;
+  --gold-dim: #c9a227;
+  --blue: #7fc8ff;
+  --cyan: #00d4ff;
+  --green: #1b8a4e;
+  --green-hi: #24b865;
+  --red: #c0392b;
+  --red-hi: #e74c3c;
+  --orange: #ff9800;
+  --violet: #b18cff;
+
+  --text: #e9f0fa;
+  --text-dim: #a9bccf;
+  --text-mute: #7f8c9a;
+  --on-accent: #05192c;
+
+  --ball-1: #ff6b6b;   /* 1~10  */
+  --ball-2: #4fc3f7;   /* 11~20 */
+  --ball-3: #ffd54f;   /* 21~30 */
+  --ball-4: #81c784;   /* 31~40 */
+  --ball-5: #ce93d8;   /* 41~45 */
+
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 16px;
+  --r-pill: 999px;
+
+  --sp-1: 4px;  --sp-2: 8px;  --sp-3: 12px;
+  --sp-4: 16px; --sp-5: 24px; --sp-6: 32px;
+
+  --shadow-1: 0 2px 8px rgba(0, 0, 0, .35);
+  --shadow-2: 0 8px 28px rgba(0, 0, 0, .5);
+
+  --ease: cubic-bezier(.22, .61, .36, 1);
+  --dur-1: 120ms;
+  --dur-2: 240ms;
+  --dur-3: 420ms;
+
+  --booth-w: 424px;
+  --su: 1;              /* 무대 스케일 단위 — JS가 갱신 */
+}
+
+/* 밝은 테마 — 폰에서 낮에 보려면 필요하다. 무대는 어두운 채로 둔다
+ * (공 색이 어두운 배경 전제로 골라져 있어서 밝게 깔면 대비가 무너진다). */
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-app: #eef2f8;
+  --bg-panel: #ffffff;
+  --bg-panel-2: #f4f7fb;
+  --bg-panel-3: #eaeff6;
+  --bg-input: #ffffff;
+  --bg-btn: #e3ebf5;
+  --bg-btn-hover: #d3e0ef;
+  --line: #c6d3e2;
+  --line-soft: #dde5ef;
+  --gold: #a67c00;
+  --blue: #1565c0;
+  --cyan: #0277bd;
+  --text: #16212e;
+  --text-dim: #46586c;
+  --text-mute: #6b7d90;
+  --on-accent: #ffffff;
+  --shadow-1: 0 2px 8px rgba(20, 40, 70, .10);
+  --shadow-2: 0 10px 30px rgba(20, 40, 70, .16);
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+/* hidden 속성은 display:none을 "기본값"으로 줄 뿐이라, 클래스에 display를
+ * 지정해 둔 요소(.row, .nums 등)에서는 조용히 무시된다.
+ * 실제로 el.hidden = true 로 감춘 검색 상태줄과 발표 오버레이의 숫자 행이
+ * 계속 보이는 버그가 여기서 나왔다. */
+[hidden] { display: none !important; }
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background: var(--bg-app);
+  color: var(--text);
+  font-family: "Pretendard Variable", Pretendard, -apple-system, BlinkMacSystemFont,
+               "Malgun Gothic", "맑은 고딕", "Apple SD Gothic Neo", system-ui, sans-serif;
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior: none;
+}
+body { overflow: hidden; }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; border: 0; background: none; }
+:where(button, [tabindex], input, select, a):focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 최상위 레이아웃
+ * ════════════════════════════════════════════════════════════════════════ */
+#app {
+  display: grid;
+  grid-template-columns: 1fr var(--booth-w);
+  height: 100dvh;
+  gap: var(--sp-3);
+  padding: var(--sp-3);
+}
+
+/* ── 무대 ──────────────────────────────────────────────────────────────────
+ * 무대는 밝은 테마에서도 어둡게 남는다. 공 색 5종이 어두운 배경을 전제로
+ * 골라져 있어서, 밝은 바탕에 얹으면 노랑(#FFD54F)·하늘(#4FC3F7)이 날아간다.
+ * 그래서 무대 안쪽에서 쓰는 토큰을 여기서 어두운 값으로 다시 못박는다.
+ * (이걸 안 하면 밝은 테마에서 빈 슬롯이 어두운 무대 위의 흰 얼룩이 된다.) */
+#stage {
+  --bg-panel-2: #0a1628;
+  --bg-overlay: #0a0f1e;
+  --bg-input: #0d1b2a;
+  --line: #2a3f5f;
+  --line-soft: #1c2c44;
+  --text: #e9f0fa;
+  --text-dim: #a9bccf;
+  --text-mute: #7f8c9a;
+  --gold: #ffd700;
+  --cyan: #00d4ff;
+  --violet: #b18cff;
+  --blue: #7fc8ff;
+  --red-hi: #e74c3c;
+  --orange: #ff9800;
+  color: var(--text);
+
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg-stage);
+  border: 2px solid var(--gold);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  transition: border-color var(--dur-1) linear;
+}
+#stage.flash { border-color: #fff; }
+
+.stage-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+/* 그리드 아이템의 기본 min-width는 auto(= min-content)다. 그대로 두면
+ * 줄바꿈이 막힌 헤더 한 줄이 열 전체를 무대 밖으로 밀어낸다 — 캔버스까지
+ * 같이 끌려나간다. 여기 세 줄이 그 연쇄를 끊는다. */
+.stage-inner > * { min-width: 0; }
+
+.stage-head {
+  display: flex;
+  align-items: center;
+  gap: calc(14px * var(--su));
+  padding: calc(10px * var(--su)) calc(20px * var(--su));
+  font-size: max(15px, calc(30px * var(--su)));
+  font-weight: 800;
+  color: var(--gold);
+  letter-spacing: -.01em;
+  z-index: 2;
+  white-space: nowrap;
+}
+/* 제목이 두 줄로 접히면 무대 높이가 들쭉날쭉해지고 캔버스가 밀린다.
+ * 좁으면 제목만 줄여서 자르고, 회차 카운터는 끝까지 지킨다. */
+#stageTitle { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.stage-head .spacer { flex: 1; min-width: 0; }
+.stage-head .counter {
+  font-size: max(12px, calc(21px * var(--su)));
+  color: var(--text-dim);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+
+/* 조건 필터가 켜져 있다는 사실은 무대 위에 항상 떠 있어야 한다.
+ * 시청자가 "왜 저 번호만 나오지" 하고 의심할 여지를 남기면 안 된다. */
+.filter-badge {
+  display: none;
+  align-items: center;
+  gap: calc(7px * var(--su));
+  padding: calc(4px * var(--su)) calc(12px * var(--su));
+  border-radius: var(--r-pill);
+  background: rgba(177, 140, 255, .16);
+  border: 1px solid rgba(177, 140, 255, .5);
+  color: var(--violet);
+  font-size: max(11px, calc(16px * var(--su)));
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  flex: none;          /* 좁아지면 제목이 줄어들지, 이 배지가 잘리면 안 된다 */
+  white-space: nowrap;
+}
+#app[data-filter="on"] .filter-badge { display: inline-flex; }
+
+/* 캔버스는 레이아웃에 영향을 주면 안 된다.
+ * 렌더러가 style.width/height를 픽셀로 박기 때문에, 일반 흐름에 두면
+ * 그리드 트랙이 캔버스 크기에 끌려가 무대 밖으로 삐져나간다
+ * (그리드 아이템의 기본 min-width가 auto = min-content라서 줄어들지도 않는다).
+ * absolute로 띄워서 트랙 크기 계산에서 완전히 빼놓는다. */
+.field-wrap { position: relative; min-width: 0; min-height: 0; overflow: hidden; }
+#field { position: absolute; inset: 0; display: block; }
+
+/* ── 번호 슬롯 띠 ────────────────────────────────────────────────────────── */
+.slot-strip {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: calc(6px * var(--su));
+  padding: calc(10px * var(--su)) calc(16px * var(--su)) calc(14px * var(--su));
+  z-index: 2;
+}
+.slots { display: flex; gap: max(6px, calc(14px * var(--su))); }
+
+/* 무대에 비례하되 절대 하한을 둔다. calc() 만 쓰면 폰에서 25px까지 쪼그라들고,
+ * 고정 px만 쓰면 FHD 방송에서 우표만 해진다. max()가 둘 다 해결한다. */
+.slot {
+  width: max(44px, calc(88px * var(--su)));
+  height: max(44px, calc(88px * var(--su)));
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--bg-panel-2);
+  border: max(2px, calc(3px * var(--su))) solid var(--line);
+  color: var(--text-mute);
+  font-size: max(20px, calc(38px * var(--su)));
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  transition: transform var(--dur-2) var(--ease), border-color var(--dur-1) linear;
+}
+.slot.filled {
+  color: #fff;
+  border-color: rgba(255, 255, 255, .85);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, .5);
+}
+.slot.pop { animation: slot-pop var(--dur-3) var(--ease); }
+@keyframes slot-pop {
+  0%   { transform: scale(.4); opacity: 0; }
+  55%  { transform: scale(1.14); opacity: 1; }
+  100% { transform: scale(1); }
+}
+
+/* 조합 요약 — 폰에서는 이 한 줄이 캔버스보다 중요하다.
+ * 조건을 어긴 항목은 빨갛게 뜬다. */
+.comb-line {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: calc(6px * var(--su)) calc(16px * var(--su));
+  font-size: max(12px, calc(18px * var(--su)));
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+  min-height: max(16px, calc(22px * var(--su)));
+}
+.comb-line b { color: var(--text); font-weight: 700; }
+.comb-line .bad { color: var(--red-hi); }
+
+/* ── 상태 줄 ─────────────────────────────────────────────────────────────── */
+.stage-status {
+  position: absolute;
+  left: 50%;
+  bottom: calc(100% + 8px);
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: calc(15px * var(--su));
+  color: var(--text-mute);
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 오버레이 (무대 위)
+ * ════════════════════════════════════════════════════════════════════════ */
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 10;
+  background: rgba(5, 13, 26, .93);
+  backdrop-filter: blur(3px);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity var(--dur-2) var(--ease), visibility var(--dur-2);
+}
+.overlay.show { opacity: 1; visibility: visible; }
+
+/* ── 번호 발표 ───────────────────────────────────────────────────────────── */
+#reveal .box { text-align: center; }
+#reveal .title {
+  font-size: max(22px, calc(50px * var(--su)));
+  font-weight: 800;
+  color: var(--gold);
+  margin-bottom: max(14px, calc(26px * var(--su)));
+  letter-spacing: -.02em;
+}
+/* 좁은 무대에서는 한 줄에 6개가 안 들어간다. 그대로 두면 넘친 공이 잘려
+ * 당첨 번호 하나가 화면에서 사라진다 — 방송에서는 치명적이다. 접어서 보여준다. */
+#reveal .nums {
+  display: flex;
+  flex-wrap: wrap;
+  gap: max(7px, calc(20px * var(--su)));
+  justify-content: center;
+  max-width: 100%;
+}
+#reveal .box { max-width: 96%; }
+#reveal .n {
+  width: max(52px, calc(130px * var(--su)));
+  height: max(52px, calc(130px * var(--su)));
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: max(24px, calc(58px * var(--su)));
+  font-weight: 800;
+  color: #fff;
+  background: var(--bg-panel-2);
+  border: calc(3px * var(--su)) solid var(--line-soft);
+  opacity: 0;
+  transform: scale(.3) rotate(-14deg);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, .55);
+}
+#reveal .n.in {
+  animation: reveal-in 420ms var(--ease) forwards;
+  border-color: rgba(255, 255, 255, .9);
+}
+@keyframes reveal-in {
+  0%   { opacity: 0; transform: scale(.3) rotate(-14deg); }
+  60%  { opacity: 1; transform: scale(1.16) rotate(3deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0); }
+}
+#reveal .ready {
+  font-size: calc(40px * var(--su));
+  font-weight: 800;
+  color: #7f9ab5;
+}
+
+/* ── 통계 ────────────────────────────────────────────────────────────────── */
+#statsOv .box {
+  width: min(92%, calc(760px * var(--su) + 240px));
+  max-height: 88%;
+  overflow: auto;
+  background: #0b1a2e;
+  border: 2px solid var(--cyan);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4);
+}
+#statsOv h3 {
+  margin: 0 0 var(--sp-3);
+  color: var(--cyan);
+  font-size: calc(24px * var(--su));
+  text-align: center;
+}
+.freq-row {
+  display: grid;
+  grid-template-columns: 2.4em 2.2em 1fr 3.2em;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 2px 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+.freq-row .rank { color: var(--text-mute); text-align: right; }
+.freq-row .bar-wrap { background: rgba(255, 255, 255, .06); border-radius: var(--r-pill); height: 13px; }
+.freq-row .bar { height: 100%; border-radius: var(--r-pill); min-width: 4px; }
+.freq-row .cnt { text-align: right; color: var(--text-dim); }
+
+.mini-ball {
+  width: 2em; height: 2em;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  font-size: 11px; font-weight: 800; color: #06121f;
+}
+
+/* ── 카운트다운 ──────────────────────────────────────────────────────────── */
+#countdown {
+  position: absolute;
+  top: calc(74px * var(--su));
+  left: 50%;
+  transform: translateX(-50%);
+  padding: calc(6px * var(--su)) calc(20px * var(--su));
+  border-radius: var(--r-pill);
+  background: rgba(255, 152, 0, .14);
+  border: 1px solid rgba(255, 152, 0, .5);
+  color: var(--orange);
+  font-size: calc(18px * var(--su));
+  font-weight: 700;
+  z-index: 12;
+  display: none;
+  font-variant-numeric: tabular-nums;
+}
+#countdown.show { display: block; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 조정실
+ * ════════════════════════════════════════════════════════════════════════ */
+#booth {
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+  background: var(--bg-panel);
+  border: 1px solid var(--line);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+}
+
+.tabs {
+  display: flex;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-panel-2);
+}
+.tab {
+  flex: 1;
+  padding: 11px 4px 9px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-mute);
+  border-bottom: 2px solid transparent;
+  transition: color var(--dur-1), border-color var(--dur-1), background var(--dur-1);
+}
+.tab:hover { color: var(--text-dim); background: rgba(255, 255, 255, .03); }
+.tab[aria-selected="true"] { color: var(--gold); border-bottom-color: var(--gold); }
+
+.panels { overflow-y: auto; overscroll-behavior: contain; padding: var(--sp-4); }
+.panel { display: none; }
+.panel.active { display: block; animation: fade-in var(--dur-2) var(--ease); }
+@keyframes fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+.group { margin-bottom: var(--sp-5); }
+.group > h4 {
+  margin: 0 0 var(--sp-3);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  color: var(--text-mute);
+  text-transform: uppercase;
+}
+
+.row { display: flex; align-items: center; gap: var(--sp-2); }
+.row + .row { margin-top: var(--sp-2); }
+.row .grow { flex: 1; min-width: 0; }
+.stack { display: grid; gap: var(--sp-2); }
+
+/* ── 컨트롤 ──────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 9px 14px;
+  border-radius: var(--r-md);
+  background: var(--bg-btn);
+  color: var(--blue);
+  font-weight: 700;
+  font-size: 14px;
+  border: 1px solid transparent;
+  transition: background var(--dur-1), color var(--dur-1), transform var(--dur-1);
+}
+.btn:hover:not(:disabled) { background: var(--bg-btn-hover); }
+.btn:active:not(:disabled) { transform: translateY(1px); }
+.btn:disabled { opacity: .42; cursor: not-allowed; }
+.btn.primary { background: var(--green); color: var(--gold); font-size: 17px; padding: 13px 18px; }
+.btn.primary:hover:not(:disabled) { background: var(--green-hi); }
+.btn.danger { background: var(--red); color: #fff; }
+.btn.danger:hover:not(:disabled) { background: var(--red-hi); }
+.btn.ghost { background: transparent; border-color: var(--line); color: var(--text-dim); }
+.btn.ghost:hover:not(:disabled) { background: rgba(255, 255, 255, .05); }
+.btn.wide { width: 100%; }
+.btn.sm { padding: 6px 10px; font-size: 13px; }
+
+.toggle {
+  padding: 7px 11px;
+  border-radius: var(--r-md);
+  background: var(--bg-input);
+  color: var(--text-mute);
+  border: 1px solid var(--line-soft);
+  font-size: 14px;
+  font-weight: 700;
+  transition: all var(--dur-1);
+}
+.toggle[aria-pressed="true"] { background: var(--bg-btn); color: var(--blue); border-color: var(--blue); }
+.toggle:disabled { opacity: .35; cursor: not-allowed; }
+
+input[type="text"], input[type="number"], select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--r-md);
+  background: var(--bg-input);
+  border: 1px solid var(--line);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+input:disabled, select:disabled { opacity: .5; }
+label.check { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; }
+label.check input { width: 17px; height: 17px; accent-color: var(--cyan); }
+.hint { font-size: 12.5px; color: var(--text-mute); line-height: 1.45; margin-top: 6px; }
+.hint.warn { color: var(--orange); }
+.hint.error { color: var(--red-hi); }
+.hint.ok { color: var(--green-hi); }
+
+/* ── 번호 격자 (제외수/고정수 선택) ──────────────────────────────────────── */
+.num-grid {
+  display: grid;
+  grid-template-columns: repeat(9, 1fr);
+  gap: 4px;
+}
+.num-grid button {
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--bg-input);
+  border: 1px solid var(--line-soft);
+  color: var(--text-dim);
+  font-size: 12.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  transition: all var(--dur-1);
+}
+.num-grid button:hover { border-color: var(--blue); }
+.num-grid button[data-pick="include"] { background: var(--green); color: #fff; border-color: var(--green-hi); }
+.num-grid button[data-pick="exclude"] { background: var(--red); color: #fff; border-color: var(--red-hi); text-decoration: line-through; }
+
+/* ── 표 ──────────────────────────────────────────────────────────────────── */
+.tbl { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.tbl th {
+  text-align: left;
+  padding: 7px 6px;
+  color: var(--text-mute);
+  font-size: 11.5px;
+  font-weight: 700;
+  border-bottom: 1px solid var(--line);
+  position: sticky; top: 0;
+  background: var(--bg-panel);
+}
+.tbl td { padding: 6px; border-bottom: 1px solid var(--line-soft); }
+.tbl tr:hover td { background: rgba(255, 255, 255, .03); }
+.nums-cell { display: flex; gap: 3px; flex-wrap: wrap; }
+.chip {
+  display: inline-grid; place-items: center;
+  width: 23px; height: 23px;
+  border-radius: 50%;
+  font-size: 11px; font-weight: 800;
+  color: #06121f;
+}
+.chip.miss { opacity: .3; }
+.chip.hit { box-shadow: 0 0 0 2px var(--gold); }
+.chip.bonus { box-shadow: 0 0 0 2px var(--violet); }
+
+.rank-tag {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  font-size: 11.5px;
+  font-weight: 800;
+}
+.rank-1 { background: var(--gold); color: #2a1d00; }
+.rank-2 { background: #c0c8d4; color: #1b232e; }
+.rank-3 { background: #cd7f32; color: #2a1500; }
+.rank-4, .rank-5 { background: var(--bg-btn); color: var(--blue); }
+.rank-0 { background: transparent; color: var(--text-mute); }
+
+.empty { padding: var(--sp-6) var(--sp-3); text-align: center; color: var(--text-mute); font-size: 13px; }
+
+/* ── 검정 리포트 ─────────────────────────────────────────────────────────── */
+.test-card {
+  background: var(--bg-panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--r-md);
+  padding: var(--sp-3);
+  margin-bottom: var(--sp-3);
+}
+.test-card h5 { margin: 0 0 6px; font-size: 14px; color: var(--text); }
+.test-verdict { font-size: 13.5px; font-weight: 700; margin: 6px 0; }
+.test-verdict.ok { color: var(--green-hi); }
+.test-verdict.weak { color: var(--orange); }
+.test-verdict.strong, .test-verdict.severe { color: var(--red-hi); }
+.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px var(--sp-3); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.kv dt { color: var(--text-mute); }
+.kv dd { margin: 0; color: var(--text-dim); }
+
+.zbars { display: grid; grid-template-columns: repeat(45, 1fr); gap: 1px; height: 74px; align-items: center; margin-top: var(--sp-2); }
+.zbar { position: relative; height: 100%; }
+.zbar i {
+  position: absolute; left: 0; right: 0;
+  background: var(--blue);
+  border-radius: 1px;
+}
+.zbar.hot i { background: var(--red-hi); }
+
+.progress { height: 7px; border-radius: var(--r-pill); background: var(--bg-input); overflow: hidden; }
+.progress i { display: block; height: 100%; background: var(--cyan); transition: width 180ms linear; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 방송 모드 — 조정실을 통째로 걷어낸다
+ * ════════════════════════════════════════════════════════════════════════ */
+#app[data-mode="broadcast"] { grid-template-columns: 1fr; padding: 0; gap: 0; }
+#app[data-mode="broadcast"] #booth,
+#app[data-mode="broadcast"] .bottom-bar { display: none; }
+#app[data-mode="broadcast"] #stage { border: 0; border-radius: 0; }
+#app[data-mode="broadcast"] .stage-status { display: none; }
+#app[data-mode="broadcast"] { cursor: none; }
+#app[data-mode="broadcast"][data-transparent="1"],
+#app[data-mode="broadcast"][data-transparent="1"] #stage,
+#app[data-mode="broadcast"][data-transparent="1"] body { background: transparent; }
+
+.exit-hint {
+  position: fixed;
+  right: 12px; bottom: 12px;
+  padding: 5px 11px;
+  border-radius: var(--r-pill);
+  background: rgba(0, 0, 0, .55);
+  color: var(--text-mute);
+  font-size: 12px;
+  opacity: 0;
+  transition: opacity var(--dur-2);
+  pointer-events: none;
+  z-index: 50;
+}
+#app[data-mode="broadcast"]:hover .exit-hint { opacity: 1; }
+
+/* 소리 잠금 안내 — 브라우저 자동재생 정책 때문에 첫 제스처 전엔 소리가 안 난다.
+ * 방송 화면 위에 큰 안내를 띄우면 그게 그대로 송출되므로 조용한 배지로 둔다. */
+.audio-lock {
+  position: fixed;
+  left: 50%; bottom: 16px;
+  transform: translateX(-50%);
+  display: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 15px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 152, 0, .16);
+  border: 1px solid rgba(255, 152, 0, .55);
+  color: var(--orange);
+  font-size: 13px;
+  font-weight: 700;
+  z-index: 60;
+  cursor: pointer;
+}
+.audio-lock.show { display: inline-flex; }
+
+/* ══════════════════════════════════════════════════════════════════════════
+ * 반응형
+ * ════════════════════════════════════════════════════════════════════════ */
+.bottom-bar { display: none; }
+
+@media (max-width: 1180px) { :root { --booth-w: 360px; } }
+
+/* 태블릿·세로 — 무대를 위에, 조정실을 아래에 */
+@media (max-width: 900px), (orientation: portrait) and (max-width: 1100px) {
+  #app {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
+    padding: 0;
+    gap: 0;
+  }
+  /* 무대 높이를 화면 비율이 아니라 뷰포트 높이로 잡는다.
+   * aspect-ratio로 잡으면 무대(16:10)와 필드(1430:1050 = 1.36:1)의 비율 차이만큼
+   * 캔버스 좌우에 검은 띠가 크게 남는다. 높이를 정해 두면 조정실이 가져갈 공간도
+   * 예측 가능해지고, 캔버스는 남은 자리에 알아서 맞춰 들어간다. */
+  #stage {
+    border: 0;
+    border-bottom: 2px solid var(--gold);
+    border-radius: 0;
+    width: 100%;
+    height: clamp(200px, 46dvh, 480px);
+  }
+  #booth { border: 0; border-radius: 0; grid-template-rows: 1fr auto; }
+  .tabs { order: 2; border-bottom: 0; border-top: 1px solid var(--line); padding-bottom: env(safe-area-inset-bottom); }
+  .panels { order: 1; padding: var(--sp-3); }
+  .tab { padding: 12px 4px; font-size: 12px; }
+  .stage-status { display: none; }
+}
+
+/* 폰 세로 — 슬롯이 작아지지 않게 --su 하한을 별도로 준다 */
+/* 크기는 위에서 max()로 이미 하한이 걸려 있다. 여기서는 간격만 손본다. */
+@media (max-width: 560px) {
+  .stage-head { padding: 7px 11px; gap: 8px; }
+  .filter-badge { padding: 2px 8px; }
+  #reveal .nums { gap: 7px; }
+  .num-grid { gap: 3px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    transition-duration: .01ms !important;
+  }
+}
+
+/* 인쇄 — 내 번호를 종이로 들고 판매점에 가는 사람이 있다 */
+@media print {
+  #stage, .tabs, .bottom-bar, .btn, .audio-lock { display: none !important; }
+  #app { display: block; height: auto; padding: 0; }
+  #booth { border: 0; }
+  .panels { overflow: visible; }
+  body { background: #fff; color: #000; overflow: visible; }
+}
