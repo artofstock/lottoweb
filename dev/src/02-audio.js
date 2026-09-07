@@ -199,13 +199,23 @@ const Speaker = (() => {
     u.rate = RATE;
     u.pitch = PITCH;
     pending++;
-    const done = () => { pending = Math.max(0, pending - 1); };
+    /* 한 발화당 정확히 한 번만 깎아야 한다.
+     * onend 와 안전망 타이머가 둘 다 깎으면, 정상 종료한 발화에서 카운터가
+     * 두 번 줄어 다음 번호의 몫까지 미리 까먹는다 — 발표 체인이 앞 번호가
+     * 아직 나오고 있는데 다음 번호로 넘어가버린다. */
+    let counted = false;
+    const done = () => {
+      if (counted) return;
+      counted = true;
+      pending = Math.max(0, pending - 1);
+      clearTimeout(guard);
+    };
     u.onend = done;
     u.onerror = done;
     synth.speak(u);
     /* 안전망: onend를 못 받는 브라우저가 있다. 문구 길이로 상한을 잡는다.
      * 이게 없으면 발표 체인이 영원히 다음 번호로 못 넘어간다. */
-    setTimeout(done, 1200 + text.length * 220);
+    const guard = setTimeout(done, 1200 + text.length * 220);
   }
 
   return {

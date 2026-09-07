@@ -45,6 +45,7 @@
   --text-dim: #a9bccf;
   --text-mute: #7f8c9a;
   --on-accent: #05192c;
+  --on-primary: #ffd700;
 
   --ball-1: #ff6b6b;   /* 1~10  */
   --ball-2: #4fc3f7;   /* 11~20 */
@@ -86,6 +87,10 @@
   --line: #c6d3e2;
   --line-soft: #dde5ef;
   --gold: #a67c00;
+  /* 초록 버튼 위 글자색은 테마와 무관하게 흰색이어야 한다.
+   * 밝은 테마의 --gold(#a67c00)를 그대로 쓰면 초록 배경과 대비가 1.15:1 이라
+   * 「추첨 시작」 글자가 사실상 안 보인다. */
+  --on-primary: #ffffff;
   --blue: #1565c0;
   --cyan: #0277bd;
   --text: #16212e;
@@ -291,16 +296,6 @@ button { cursor: pointer; border: 0; background: none; }
 .comb-line .bad { color: var(--red-hi); }
 
 /* ── 상태 줄 ─────────────────────────────────────────────────────────────── */
-.stage-status {
-  position: absolute;
-  left: 50%;
-  bottom: calc(100% + 8px);
-  transform: translateX(-50%);
-  white-space: nowrap;
-  font-size: calc(15px * var(--su));
-  color: var(--text-mute);
-}
-
 /* ══════════════════════════════════════════════════════════════════════════
  * 오버레이 (무대 위)
  * ════════════════════════════════════════════════════════════════════════ */
@@ -393,8 +388,24 @@ button { cursor: pointer; border: 0; background: none; }
   font-size: 13px;
 }
 .freq-row .rank { color: var(--text-mute); text-align: right; }
-.freq-row .bar-wrap { background: rgba(255, 255, 255, .06); border-radius: var(--r-pill); height: 13px; }
-.freq-row .bar { height: 100%; border-radius: var(--r-pill); min-width: 4px; }
+.freq-row .bar-wrap {
+  display: block;                 /* 그리드 아이템이라 어차피 블록이지만 명시해 둔다 */
+  background: rgba(255, 255, 255, .06);
+  border-radius: var(--r-pill);
+  height: 13px;
+  overflow: hidden;
+}
+/* display:block 이 없으면 <i> 는 인라인이라 width·height 를 통째로 무시한다.
+ * 레일(.bar-wrap)은 그리드 아이템이라 저절로 블록이 되지만, 그 안의 막대는
+ * 그리드 아이템이 아니라서 인라인으로 남는다 → 폭을 25%로 지정해도 0px 로
+ * 그려져 막대가 아예 안 보였다. 실제로 그렇게 깨져 있었다. */
+.freq-row .bar {
+  display: block;
+  height: 100%;
+  border-radius: var(--r-pill);
+  min-width: 3px;
+  transition: width var(--dur-3) var(--ease);
+}
 .freq-row .cnt { text-align: right; color: var(--text-dim); }
 
 .mini-ball {
@@ -491,7 +502,16 @@ button { cursor: pointer; border: 0; background: none; }
 .btn:hover:not(:disabled) { background: var(--bg-btn-hover); }
 .btn:active:not(:disabled) { transform: translateY(1px); }
 .btn:disabled { opacity: .42; cursor: not-allowed; }
-.btn.primary { background: var(--green); color: var(--gold); font-size: 17px; padding: 13px 18px; }
+/* 글자 크기 19px + bold 는 WCAG 의 "큰 텍스트"(14pt bold) 기준을 넘는다.
+ * 원본의 정체성인 금색-초록 조합(3.12:1)이 큰 텍스트 기준 3:1 을 통과하므로
+ * 색을 바꾸지 않고도 접근성 기준을 맞출 수 있다.
+ * 밝은 테마에서는 --gold 가 어두워져 1.15:1 이 되므로 --on-primary 가 흰색으로 바뀐다. */
+.btn.primary {
+  background: var(--green);
+  color: var(--on-primary);
+  font-size: 19px;
+  padding: 12px 18px;
+}
 .btn.primary:hover:not(:disabled) { background: var(--green-hi); }
 .btn.danger { background: var(--red); color: #fff; }
 .btn.danger:hover:not(:disabled) { background: var(--red-hi); }
@@ -626,13 +646,14 @@ label.check input { width: 17px; height: 17px; accent-color: var(--cyan); }
  * ════════════════════════════════════════════════════════════════════════ */
 #app[data-mode="broadcast"] { grid-template-columns: 1fr; padding: 0; gap: 0; }
 #app[data-mode="broadcast"] #booth,
-#app[data-mode="broadcast"] .bottom-bar { display: none; }
-#app[data-mode="broadcast"] #stage { border: 0; border-radius: 0; }
-#app[data-mode="broadcast"] .stage-status { display: none; }
+#app[data-mode="broadcast"] #app[data-mode="broadcast"] #stage { border: 0; border-radius: 0; }
 #app[data-mode="broadcast"] { cursor: none; }
+/* body 는 #app 의 부모다. 자손 선택자로는 절대 안 잡혀서 투명 모드가
+ * 동작하지 않았다. html/body 는 :has() 로 위에서 잡는다. */
 #app[data-mode="broadcast"][data-transparent="1"],
-#app[data-mode="broadcast"][data-transparent="1"] #stage,
-#app[data-mode="broadcast"][data-transparent="1"] body { background: transparent; }
+#app[data-mode="broadcast"][data-transparent="1"] #stage { background: transparent; }
+html:has(#app[data-transparent="1"]),
+html:has(#app[data-transparent="1"]) body { background: transparent; }
 
 .exit-hint {
   position: fixed;
@@ -673,7 +694,6 @@ label.check input { width: 17px; height: 17px; accent-color: var(--cyan); }
 /* ══════════════════════════════════════════════════════════════════════════
  * 반응형
  * ════════════════════════════════════════════════════════════════════════ */
-.bottom-bar { display: none; }
 
 @media (max-width: 1180px) { :root { --booth-w: 360px; } }
 
@@ -721,7 +741,7 @@ label.check input { width: 17px; height: 17px; accent-color: var(--cyan); }
 
 /* 인쇄 — 내 번호를 종이로 들고 판매점에 가는 사람이 있다 */
 @media print {
-  #stage, .tabs, .bottom-bar, .btn, .audio-lock { display: none !important; }
+  #stage, .tabs, .btn, .audio-lock { display: none !important; }
   #app { display: block; height: auto; padding: 0; }
   #booth { border: 0; }
   .panels { overflow: visible; }

@@ -443,7 +443,12 @@ class LottoEngine {
         const toHx = hx - ball.prevX;
         const toHy = hy - ball.prevY;
         const t = (toHx * segDx + toHy * segDy) / segLenSq;
-        if (t <= 0 || t >= 1) continue;   // 선분 양 끝 밖 (끝점은 ①이 이미 검사)
+        /* 끝점 t=1 은 반드시 포함해야 한다.
+         * 원본은 t>=1 을 잘라내고 "끝점은 ①이 이미 검사한다"고 적었는데,
+         * ①이 보는 건 충돌 보정까지 끝난 현재 위치이고 이 구간의 끝점은
+         * 보정 전 위치다. 공이 속도로 캡처원 안에 들어갔는데 같은 틱의
+         * 충돌 보정이 밖으로 밀어내면, 두 검사 모두 그 공을 놓친다. */
+        if (t <= 0 || t > 1) continue;
 
         const px = ball.prevX + t * segDx;
         const py = ball.prevY + t * segDy;

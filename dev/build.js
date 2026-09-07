@@ -45,10 +45,13 @@ for (const [token, body] of [['/*__CSS__*/', css], ['/*__CORE__*/', core],
   if (body.includes(token)) throw new Error(`${token} 문자열이 소스 안에 들어 있습니다`);
 }
 
-/* </script> 가 문자열 리터럴 안에 있으면 브라우저가 거기서 스크립트를 끊는다.
- * 실제로 있으면 빌드를 실패시킨다 — 조용히 깨진 파일을 내보내는 것보다 낫다. */
+/* </script> 가 문자열이나 주석 안에 있으면 브라우저가 거기서 스크립트를 끊는다.
+ * 여는 <script 태그도 금지한다 — 당장 깨지지는 않지만, 검증 스크립트가 진짜
+ * 태그와 구별하지 못해 오탐을 내고(실제로 냈다) 나중에 잘라 붙일 때 사고가 난다.
+ * 조용히 깨진 파일을 내보내느니 빌드를 세우는 게 낫다. */
 for (const [name, body] of [['core', core], ['glue', glue], ['app', app]]) {
   if (/<\/script/i.test(body)) throw new Error(`${name} 에 </script 문자열이 있습니다`);
+  if (/<script/i.test(body)) throw new Error(`${name} 에 <script 문자열이 있습니다`);
 }
 
 html = html

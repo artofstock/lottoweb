@@ -137,6 +137,9 @@ const filterAccepts = (nums, f) => filterReject(nums, f) === null;
  * 반환: {ok, reason, rate, expectedTries, poolSize, exact}
  * ────────────────────────────────────────────────────────────────────────── */
 function analyzeFilter(f, opts = {}) {
+  /* 정규화가 고정수를 5개로 잘라내므로, 자르기 전 원본으로 먼저 확인한다.
+   * 안 그러면 6개를 넣은 사용자에게 엉뚱한 사유가 표시된다. */
+  const rawInclude = Array.isArray(f && f.include) ? f.include.length : 0;
   f = normalizeFilter(f);
   const rng = opts.rng || makeRng(0x5eed1e);   // 추정은 재현 가능해야 화면이 안 흔들린다
 
@@ -145,7 +148,7 @@ function analyzeFilter(f, opts = {}) {
   const pool = [];
   for (let i = 1; i <= 45; i++) if (!f.exclude.includes(i)) pool.push(i);
 
-  if (f.include.length > MAX_INCLUDE) {
+  if (rawInclude > MAX_INCLUDE) {
     return fail(
       `고정수는 ${MAX_INCLUDE}개까지만 지정할 수 있습니다. 6개를 모두 고정하면 ` +
       `결과가 하나로 정해져 버려, 이 프로그램의 순수성 선언과 어긋납니다.`);
@@ -221,7 +224,7 @@ function analyzeFilter(f, opts = {}) {
     rate,
     expectedTries: 1 / rate,
     poolSize: pool.length,
-    exact: false,
+    exact: lastRateWasExact,
     /* 통과율이 낮으면 어떤 조건이 발목을 잡는지 미리 계산해 둔다.
      * "조건을 완화하세요"만 띄우면 사용자는 뭘 만져야 할지 모른다. */
     culprits: (1 / rate) > 300 ? findCulprits(f, rng) : null,
@@ -232,8 +235,39 @@ function analyzeFilter(f, opts = {}) {
   }
 }
 
+/* 직전 estimateRate 호출이 전수 계산이었는지 (추정이 아니라) */
+let lastRateWasExact = false;
+
 const MC_MAX_SAMPLES = 300_000;
 const MC_TARGET_HITS = 100;
+
+function countComb(n, k) {
+  if (k < 0 || k > n) return 0;
+  let r = 1;
+  for (let i = 0; i < k; i++) r = r * (n - i) / (i + 1);
+  return Math.round(r);
+}
+
+/* 고정수를 뺀 나머지 자리를 전수 조합으로 채워 보며 통과 개수를 센다.
+ * 분모는 C(45,6) — 물리 추첨이 뽑는 전체 모집단이다. */
+function exactRate(pool, free, f) {
+  const total = countComb(45, 6);
+  if (free === 0) return filterAccepts(f.include.slice(), f) ? 1 / total : 0;
+  const pick = new Array(free);
+  let hits = 0;
+  const rec = (start, depth) => {
+    if (depth === free) {
+      if (filterAccepts(f.include.concat(pick), f)) hits++;
+      return;
+    }
+    for (let i = start; i <= pool.length - (free - depth); i++) {
+      pick[depth] = pool[i];
+      rec(i + 1, depth + 1);
+    }
+  };
+  rec(0, 0);
+  return hits / total;
+}
 
 /* 통과율 추정. 히트 100개를 모으면 조기 종료한다.
  *
@@ -246,6 +280,18 @@ const MC_TARGET_HITS = 100;
 const ALL45 = Array.from({ length: 45 }, (_, i) => i + 1);
 
 function estimateRate(f, rng) {
+  /* 고정수가 많으면 남은 자리가 적어 조합을 전부 셀 수 있다.
+   * 몬테카를로로는 이 영역을 감당하지 못한다 — 고정수 5개면 통과율이
+   * 1/203,627 이라 30만 표본으로도 4번 중 1번은 히트 0이 나오고,
+   * 시드가 고정돼 있어 "불가능"이라는 잘못된 판정이 그대로 굳는다.
+   * 앱이 스스로 허용한 설정을 앱이 거부하는 셈이라 반드시 정확히 세야 한다. */
+  const pool = ALL45.filter(n => !f.exclude.includes(n) && !f.include.includes(n));
+  const free = 6 - f.include.length;
+  if (free >= 0 && countComb(pool.length, free) <= 400_000) {
+    lastRateWasExact = true;
+    return exactRate(pool, free, f);
+  }
+  lastRateWasExact = false;
   const work = ALL45.slice();
   const buf = new Array(6);
   let hits = 0, samples = 0;
@@ -281,7 +327,9 @@ function findCulprits(f, rng) {
     const r = estimateRate({ ...f, ...patch }, makeRng(0xc0ffee));
     out.push({ key, label, rate: r, gain: base > 0 ? r / base : (r > 0 ? Infinity : 1) });
   }
-  out.sort((a, b) => b.gain - a.gain);
+  /* base 가 0이면 gain 이 전부 Infinity 라 Infinity-Infinity = NaN 이 되고,
+   * NaN 비교자는 정렬 순서를 미정의로 만든다. 통과율 자체로 정렬한다. */
+  out.sort((a, b) => (b.rate - a.rate) || (b.gain - a.gain) || 0);
   return out.slice(0, 3);
 }
 

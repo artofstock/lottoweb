@@ -21,7 +21,7 @@
 /* 버전은 여기 한 곳에만 둔다. 원본은 APP_VERSION이 1.9.9에 멈춘 채 파일명만
  * v1.9.11로 올라가 있었다 — 한 곳만 고치면 되게 만들어 놓고도 갱신을 놓친 것이다.
  * 화면(설정 탭)과 백업 파일이 모두 이 상수를 읽는다. */
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.1.0';
 const BASED_ON = '로또추첨기FHD v1.9.11 (Python/Tkinter)';
 
 /* ── 타이밍 상수 (원본 계승) ─────────────────────────────────────────────── */
@@ -95,7 +95,7 @@ function download(filename, text, mime = 'text/plain;charset=utf-8') {
 }
 
 /* ── 워커 풀 ──────────────────────────────────────────────────────────────
- * 물리 코드는 파일 안에 정확히 한 벌만 존재한다. <script id="core-src">의
+ * 물리 코드는 파일 안에 정확히 한 벌만 존재한다. id="core-src" 스크립트의
  * 텍스트를 메인 스레드가 실행하고, 같은 문자열을 Blob으로 만들어 워커도
  * 실행한다. "화면에서 도는 물리"와 "검정이 채점한 물리"가 같은 코드라는 게
  * 코드 구조 자체로 보장된다 — 이게 공정성 주장의 근거다. */
@@ -322,6 +322,10 @@ class App {
     // ★ 원본 버그: 여기서 타이머부터 죽이고 나서 검사했다.
     //   카운트다운 중 시작을 누르면 자동 진행이 조용히 멈췄다.
     if (!this.sm.canStart()) return;
+    /* 시드 탐색 중에는 상태가 아직 IDLE이라 canStart()가 true다.
+     * 그 사이 시작을 또 누르면 워커 풀이 통째로 미아가 되고,
+     * 곧이어 RUNNING→RUNNING 전이가 예외를 던진다. */
+    if (this._searching) return;
     this.timers.clearAll();
     this.setCountdown('');
     this.hideOverlay('statsOv');
@@ -435,9 +439,17 @@ class App {
 
   reset() {
     this.timers.clearAll();
+    /* ★ abortSearch()는 워커만 죽인다. 취소 클로저를 부르지 않으면
+     *   · 메인스레드 폴백: rAF 탐색이 계속 돌다가 리셋한 지 한참 뒤에
+     *     제 발로 추첨을 시작해버린다.
+     *   · 워커 경로: 대기 중인 Promise가 영영 안 풀려 시작 버튼이 잠긴다. */
+    if (this._cancelSearch) this._cancelSearch();
     this.abortSearch();
     Speaker.cancel();
     this.sm.transition(GameState.IDLE, true);
+    /* IDLE→IDLE 은 전이가 아니라서 onStateChange 가 안 불린다.
+     * 그래서 리셋해도 잠긴 컨트롤이 안 풀리는 경우가 있었다 — 직접 부른다. */
+    this.onStateChange();
     this._reachedMax = false;
     this.hideOverlay('reveal');
     this.hideOverlay('statsOv');
@@ -451,7 +463,7 @@ class App {
 
   onStateChange() {
     const idle = this.sm.isIdle() || this.sm.isCompleted();
-    $('#startBtn').disabled = !this.sm.canStart();
+    this.refreshStartButton();
     $('#holeBtn').disabled = !idle;
     $('#roundInput').disabled = !idle;
     $('#suffixInput').disabled = !idle;
@@ -466,9 +478,20 @@ class App {
   searchFilteredSeed() {
     const filter = normalizeFilter(this.cfg.get('filter'));
     const holeCount = this.engine.holeCount;
-    const n = workerCount();
     const maxAttempts = 400_000;
 
+    /* 워커를 몇 개 쓸지는 "폐기 판수를 정확히 셀 수 있는가"로 정한다.
+     * 워커를 여러 개 띄우면, 하나가 답을 찾는 순간 나머지를 강제 종료하는데
+     * 그때 아직 보고되지 않은 잔여분(워커당 최대 24판)이 사라진다.
+     * 짧은 탐색에서는 그 오차가 전체의 절반을 넘길 수도 있다 — 화면에
+     * "폐기 8판"이라 써놓고 실제로는 60판을 버린 셈이 된다.
+     * 그래서 예상 시도가 적으면 워커 1개로 정확히 세고(어차피 순식간),
+     * 길어질 때만 병렬로 간다(그때는 잔여분이 0.1% 수준이라 무해). */
+    const est = analyzeFilter(filter);
+    const expected = est.ok ? est.expectedTries : Infinity;
+    const n = expected < 3000 ? 1 : workerCount();
+
+    this._searching = true;
     this.setStatus('조건에 맞는 추첨을 찾는 중…');
     $('#searchBox').hidden = false;
     $('#searchTried').textContent = '0';
@@ -488,8 +511,10 @@ class App {
       const done = (result) => {
         if (settled) return;
         settled = true;
+        this._searching = false;
+        this._cancelSearch = null;   // 낡은 클로저가 다시 불리지 않게
         this.abortSearch();
-        $('#startBtn').disabled = !this.sm.canStart();
+        this.refreshStartButton();
         resolve(result);
       };
 
@@ -528,19 +553,27 @@ class App {
     const seedRng = makeRng();
     let tried = 0;
     let cancelled = false;
-    this._cancelSearch = () => { cancelled = true; };
+    let settled = false;
 
     return new Promise((resolve) => {
       const finish = (result) => {
+        if (settled) return;
+        settled = true;
+        cancelled = true;
+        this._searching = false;
+        this._cancelSearch = null;
         this.lockFilterInputs(false);
         $('#searchBox').hidden = true;
         $('#searchNote').hidden = true;
-        $('#startBtn').disabled = !this.sm.canStart();
+        this.refreshStartButton();
         if (!result) this.setStatus('조건 추첨을 멈췄습니다.');
         resolve(result);
       };
+      /* 다음 프레임까지 기다리지 않고 그 자리에서 끝낸다. 플래그만 세우면
+       * 리셋 직후 한 프레임이 더 돌아 추첨이 제 발로 시작될 수 있다. */
+      this._cancelSearch = () => finish(null);
       const tick = () => {
-        if (cancelled) return finish(null);
+        if (cancelled || settled) return;
         const t0 = performance.now();
         while (performance.now() - t0 < 12) {
           if (tried >= maxAttempts) {
@@ -575,9 +608,12 @@ class App {
   abortSearch() {
     for (const w of this.searchWorkers) w.terminate();
     this.searchWorkers = [];
+    this._searching = false;
     $('#searchBox').hidden = true;
     $('#searchNote').hidden = true;
     this.lockFilterInputs(false);
+    // 어떤 경로로 들어와도 시작 버튼이 잠긴 채 남지 않게
+    this.refreshStartButton();
   }
 
   /* ══════════════════════════════════════════════════════════════════════
@@ -670,16 +706,23 @@ class App {
 
   /* ── 통계 오버레이 ─────────────────────────────────────────────────────── */
   showStats() {
-    const freq = this.engine.sortedFreq().slice(0, 20);
     const total = this.engine.totalGames;
     if (!total) return;
-    const max = Math.max(1, freq[0][1]);
+
+    /* 한 번도 안 나온 번호는 빼고 센다.
+     * 게임 수가 적으면 나온 번호가 20개도 안 되는데, 그대로 20줄을 채우면
+     * 0회짜리 번호가 "TOP 20" 안에 들어앉고 최소폭 때문에 막대까지 그려진다.
+     * 안 나온 번호를 순위표에 올리는 건 그냥 틀린 표시다. */
+    const freq = this.engine.sortedFreq().filter(([, c]) => c > 0).slice(0, 20);
+    if (!freq.length) return;
+    const max = freq[0][1];
 
     const body = $('#statsBody');
     body.innerHTML = '';
     freq.forEach(([n, c], i) => {
       const bar = el('i', { class: 'bar' });
-      bar.style.width = Math.max(4, (c / max) * 100) + '%';
+      // 최다 출현 번호를 100%로 두고 나머지를 그 비율로 그린다 (3회 : 2회 = 100% : 67%)
+      bar.style.width = (c / max) * 100 + '%';
       bar.style.background = ballColor(n);
       const ball = el('span', { class: 'mini-ball' }, String(n));
       ball.style.background = ballColor(n);
@@ -690,7 +733,10 @@ class App {
         el('span', { class: 'cnt' }, `${c}회`),
       ));
     });
-    $('#statsTitle').textContent = `누적 ${total}게임 · 번호 출현 TOP 20`;
+
+    $('#statsTitle').textContent = freq.length >= 20
+      ? `누적 ${total}게임 · 번호 출현 TOP 20`
+      : `누적 ${total}게임 · 나온 번호 ${freq.length}개`;
     $('#statsOv').classList.add('show');
   }
 
@@ -698,9 +744,10 @@ class App {
    * 무대 표시
    * ════════════════════════════════════════════════════════════════════ */
   resetSlots() {
-    $$('#slots .slot').forEach(s => {
+    $$('#slots .slot').forEach((s, i) => {
       s.className = 'slot';
       s.textContent = '';
+      s.setAttribute('aria-label', `${i + 1}번째 공`);
       s.style.background = '';
       s.style.borderColor = '';
     });
@@ -711,6 +758,7 @@ class App {
     if (!s) return;
     s.className = 'slot filled pop';
     s.textContent = String(n);
+    s.setAttribute('aria-label', `${i + 1}번째 공 ${n}번`);
     s.style.background = ballColor(n);
     s.style.color = '#0b1420';
   }
@@ -752,6 +800,9 @@ class App {
   updateFilterBadge() {
     const on = this.cfg.get('filterOn') && !isFilterTrivial(this.cfg.get('filter'));
     $('#app').dataset.filter = on ? 'on' : 'off';
+    // 조건이 켜지면 순수성 선언이 그대로 적용되지 않는다는 사실을 설정 탭에 띄운다
+    const note = $('#purityFilterNote');
+    if (note) note.hidden = !on;
     if (on) $('#filterDiscard').textContent = `조건 추첨 · 폐기 ${this.filterDiscarded.toLocaleString()}판`;
   }
 
@@ -786,7 +837,10 @@ class App {
   buildUI() {
     // 슬롯 6개
     const slots = $('#slots');
-    for (let i = 0; i < 6; i++) slots.append(el('div', { class: 'slot' }));
+    for (let i = 0; i < 6; i++) {
+      // role="list" 컨테이너에 listitem 이 없으면 스크린리더는 빈 목록으로 읽는다
+      slots.append(el('div', { class: 'slot', role: 'listitem', 'aria-label': `${i + 1}번째 공` }));
+    }
 
     // 게임 수 옵션
     const mg = $('#maxGames');
@@ -955,16 +1009,24 @@ class App {
     // 단축키 — 원본 Space/R/S/T/H 계승
     window.addEventListener('keydown', (e) => {
       if (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+      if (e.target.isContentEditable) return;
       if (e.ctrlKey || e.metaKey || e.altKey) return;
       const k = e.key.toLowerCase();
-      if (k === ' ' || k === 'spacebar') { e.preventDefault(); this.startDraw(); }
+      /* 버튼에 포커스가 있으면 Space·Enter 는 그 버튼을 눌러야 한다.
+       * 가로채면 [리셋]으로 탭 이동해 Space 를 누른 사용자가 추첨을 시작하게 된다. */
+      if (e.target.tagName === 'BUTTON' && (k === ' ' || k === 'spacebar' || k === 'enter')) return;
+      // 화면에서 막아둔 동작을 단축키로 우회할 수 있으면 막아둔 의미가 없다
+      if (k === ' ' || k === 'spacebar') {
+        e.preventDefault();
+        if (!$('#startBtn').disabled) this.startDraw();
+      }
       else if (k === 'r') this.reset();
       else if (k === 's') $('#soundBtn').click();
       else if (k === 't') $('#ttsBtn').click();
       else if (k === 'h') $('#holeBtn').click();
       else if (k === 'b') this.toggleBroadcast();
       else if (k === 'escape' && this.broadcast) this.toggleBroadcast();
-      else if (k === '?') $('#helpDlg').showModal();
+      else if (k === '?' && !$('#helpDlg').open) $('#helpDlg').showModal();
     });
 
     window.addEventListener('beforeunload', (e) => {
@@ -1030,6 +1092,12 @@ class App {
       else if (f.exclude.includes(n)) b.dataset.pick = 'exclude';
       else b.removeAttribute('data-pick');
     });
+    $('#filterOn').checked = this.cfg.get('filterOn');
+    /* 무대 배지도 여기서 같이 맞춘다. 이 함수가 "설정 → 화면" 동기화의
+     * 단일 창구인데 배지만 빠져 있으면, 체크박스를 거치지 않는 경로(복원·
+     * 프로그램적 변경)에서 조건이 켜졌는데 무대에는 표시가 안 되는 상태가 된다.
+     * 조건 추첨을 쓰면서 그 사실이 화면에 안 뜨는 건 그냥 부정직한 화면이다. */
+    this.updateFilterBadge();
     this.updateFilterAnalysis();
   }
 
@@ -1122,20 +1190,34 @@ class App {
 
   updateFilterAnalysis() {
     const f = this.currentFilter();
+
     if (!this.cfg.get('filterOn')) {
       this.setFilterHint('', '조건 필터가 꺼져 있습니다. 순수 물리 추첨 결과를 그대로 사용합니다.');
-      return;
-    }
-    if (isFilterTrivial(f)) {
+      this._filterBlocks = false;
+    } else if (isFilterTrivial(f)) {
       this.setFilterHint('ok', '아직 조건이 없습니다. 조건을 걸면 통과율과 예상 소요 시간이 여기에 표시됩니다.');
-      return;
+      this._filterBlocks = false;
+    } else {
+      const a = analyzeFilter(f);
+      const perDraw = (this.msPerDraw[this.engine.holeCount] || 8)
+                    * (workersAvailable() ? 1 : FALLBACK_SLOWDOWN);
+      const d = describeFilterOdds(a, perDraw, workerCount());
+      this.setFilterHint(d.level === 'error' ? 'error' : d.level === 'warn' ? 'warn' : 'ok',
+                         d.text, d.culprits);
+      this._filterBlocks = !a.ok;
     }
-    const a = analyzeFilter(f);
-    const perDraw = (this.msPerDraw[this.engine.holeCount] || 8)
-                  * (workersAvailable() ? 1 : FALLBACK_SLOWDOWN);
-    const d = describeFilterOdds(a, perDraw, workerCount());
-    this.setFilterHint(d.level === 'error' ? 'error' : d.level === 'warn' ? 'warn' : 'ok', d.text, d.culprits);
-    $('#startBtn').disabled = !this.sm.canStart() || (this.cfg.get('filterOn') && !a.ok);
+    /* ★ 어느 갈래로 빠지든 버튼 상태를 반드시 다시 계산한다.
+     * 예전에는 위 두 갈래에서 그냥 return 해버려서, 불가능한 조건 때문에
+     * 비활성화된 시작 버튼이 조건 필터를 꺼도 그대로 잠긴 채 남았다.
+     * 대기 상태에선 상태 전이가 안 일어나므로 아무도 풀어주지 않는다 —
+     * 추첨을 아예 못 하는 막다른 골목이었다. */
+    this.refreshStartButton();
+  }
+
+  /* 시작 버튼을 켤지 끌지 판단하는 곳은 여기 한 군데뿐이다.
+   * 두 군데에서 각자 계산하면 반드시 어긋난다. */
+  refreshStartButton() {
+    $('#startBtn').disabled = !this.sm.canStart() || !!this._filterBlocks;
   }
 
   /* ══════════════════════════════════════════════════════════════════════

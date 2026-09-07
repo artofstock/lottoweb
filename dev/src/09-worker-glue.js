@@ -30,8 +30,11 @@ self.onmessage = (ev) => {
         self.postMessage({ type: 'found', seed, numbers: r.numbers, delta: since });
         return;
       }
-      /* 진행 보고는 200판마다 — 매 판 보내면 postMessage가 탐색보다 비싸진다. */
-      if (since >= 200) { self.postMessage({ type: 'progress', delta: since }); since = 0; }
+      /* 진행 보고 간격. 화면의 "폐기 N판"은 정직성 지표라 실제보다 적게
+       * 나오면 안 된다. 워커가 강제 종료되면 마지막 보고 이후의 잔여분이
+       * 통째로 사라지므로, 간격이 곧 워커당 최대 누락분이 된다.
+       * 25판이면 postMessage 비용은 여전히 무시할 수준이다. */
+      if (since >= 25) { self.postMessage({ type: 'progress', delta: since }); since = 0; }
     }
     self.postMessage({ type: 'exhausted', delta: since });
     return;

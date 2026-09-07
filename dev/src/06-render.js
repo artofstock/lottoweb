@@ -19,7 +19,10 @@ const HOLE_GLOW_COLORS = ['#FF4444', '#FF6B20', '#FFB300', '#FFD700'];
 class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
-    this.ctx = canvas.getContext('2d', { alpha: false });
+    /* alpha:false 로 만들면 백버퍼에 알파 채널이 없어서, 투명 방송 모드에서
+     * clearRect 를 해도 투명이 아니라 검정으로 채워진다 (OBS 합성이 안 됨).
+     * 알파를 켠 대신 불투명 경로에서는 배경을 명시적으로 칠해 성능을 지킨다. */
+    this.ctx = canvas.getContext('2d', { alpha: true });
     this.scale = 1;
     this.offX = 0;
     this.offY = 0;
